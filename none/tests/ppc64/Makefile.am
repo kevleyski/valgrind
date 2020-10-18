@@ -143,13 +143,7 @@ BUILD_FLAGS_ISA_3_00 =
 ISA_3_00_FLAG =
 endif
 
-if HAS_ISA_3_1
-BUILD_FLAGS_ISA_3_1 = -mcpu=power10
-ISA_3_1_FLAG = -DHAS_ISA_3_1
-else
-BUILD_FLAGS_ISA_3_1 =
 ISA_3_1_FLAG =
-endif
 
 test_isa_2_06_part1_CFLAGS = $(AM_CFLAGS) -Winline -Wall -O -g -mregnames $(VSX_FLAG) \
 			@FLAG_M64@ $(ALTIVEC_FLAG) $(BUILD_FLAG_VSX)

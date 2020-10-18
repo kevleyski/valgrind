@@ -95,6 +95,20 @@ ASFLAGS=""
 AC_SUBST(ASFLAGS)
 ])
 
+dnl automake-1.10 does not have AM_COND_IF (added in 1.11), so we supply a
+dnl fallback definition
+dnl The macro is courtesy of Dave Hart:
+dnl   https://lists.gnu.org/archive/html/automake/2010-12/msg00045.html
+m4_ifndef([AM_COND_IF], [AC_DEFUN([AM_COND_IF], [
+if test -z "$$1_TRUE"; then :
+  m4_n([$2])[]dnl
+m4_ifval([$3],
+[else
+  $3
+])dnl
+fi[]dnl
+])])
+
 
 # Check if 'diff' supports -u (universal diffs) and use it if possible.
 
@@ -118,6 +132,40 @@ AC_PROG_CC_C99
 if test "$ac_cv_prog_cc_c99" == "no"; then
     AC_MSG_ERROR([Valgrind relies on a C compiler supporting C99])
 fi
+
+# macOS: Detect the Xcode SDK path and inject it in different tools
+AM_COND_IF([VGCONF_OS_IS_DARWIN],
+[
+  AC_ARG_VAR([DEVELOPER_DIR],[Overrides the active developer directory (used in gcc, xcrun, etc)])
+  AC_CHECK_PROG([XCRUN], [xcrun], [yes], [no])
+
+  AC_MSG_CHECKING([for Xcode SDK and includes])
+  AC_ARG_WITH([xcode-path],
+  [  --with-xcode-path=PATH      Specify path for Xcode SDK],
+  [
+      # Set defaults in case `xcrun` fails
+      xcodedir="$withval"
+      xcodedir_inc="$xcodedir/usr/include"
+      # Defining DEVELOPER_DIR will override which version of gcc, xcrun, etc is being used
+      export DEVELOPER_DIR="$xcodedir"
+  ],
+  [
+      # Use system defaults, in case `xcrun` fails
+      xcodedir="active developer directory"
+      xcodedir_inc="/usr/include"
+  ])
+
+  if test "x$XCRUN" != "xno"; then
+    xcrundir=`xcrun --sdk macosx --show-sdk-path`
+    if test ! -z "$xcrundir"; then
+        xcodedir="$xcrundir"
+        xcodedir_inc="$xcodedir/usr/include"
+    fi
+  else
+    AC_MSG_WARN([Couldn't find xcrun, most Xcode-related autodetection will be disabled and the build might fail])
+  fi
+  AC_MSG_RESULT([$xcodedir (includes: $xcodedir_inc)])
+])
 
 # We don't want gcc < 3.0
 AC_MSG_CHECKING([for a supported version of gcc])
@@ -143,12 +191,17 @@ AC_MSG_CHECKING([for a supported version of gcc])
 # ######## Apple LLVM variants ########
 # Apple LLVM version 5.1 (clang-503.0.40) (based on LLVM 3.4svn)
 # Apple LLVM version 6.0 (clang-600.0.51) (based on LLVM 3.5svn)
+# Apple clang version 11.0.0 (clang-1100.0.33.17) (since macOS 10.15)
 #
 [
 if test "x`${CC} --version | $SED -n -e 's/.*\Apple \(LLVM\) version.*clang.*/\1/p'`" = "xLLVM" ;
 then
     is_clang="applellvm"
     gcc_version=`${CC} --version | $SED -n -e 's/.*LLVM version \([0-9.]*\).*$/\1/p'`
+elif test "x`${CC} --version | $SED -n -e 's/.*\Apple \(clang\) version.*clang.*/\1/p'`" = "xclang" ;
+then
+    is_clang="applellvm"
+    gcc_version=`${CC} --version | $SED -n -e 's/.*clang version \([0-9.]*\).*$/\1/p'`
 elif test "x`${CC} --version | $SED -n -e 's/.*\(clang\) version.*/\1/p'`" = "xclang" ;
 then
     is_clang="clang"
@@ -372,6 +425,16 @@ case "${host_os}" in
         AC_DEFINE([DARWIN_10_11], 101100, [DARWIN_VERS value for Mac OS X 10.11])
         AC_DEFINE([DARWIN_10_12], 101200, [DARWIN_VERS value for macOS 10.12])
         AC_DEFINE([DARWIN_10_13], 101300, [DARWIN_VERS value for macOS 10.13])
+        AC_DEFINE([DARWIN_10_14], 101400, [DARWIN_VERS value for macOS 10.14])
+        AC_DEFINE([DARWIN_10_15], 101500, [DARWIN_VERS value for macOS 10.15])
+
+        AC_DEFINE([XCODE_10_XX], 101400, [XCODE_VERS value for Xcode earlier than 10.15])
+        AC_DEFINE([XCODE_10_14_6], 101406, [XCODE_VERS value for Xcode 10.14.6])
+        AC_DEFINE([XCODE_10_15], 101500, [XCODE_VERS value for Xcode 10.15])
+        AC_DEFINE([XCODE_11_0], 110000, [XCODE_VERS value for Xcode 11.0])
+
+        # Substitute the Xcode include path detected earlier
+        AC_SUBST(XCODE_INC_DIR, [$xcodedir_inc])
 
 	AC_MSG_CHECKING([for the kernel version])
 	kernel=`uname -r`
@@ -447,11 +510,49 @@ case "${host_os}" in
 		  DEFAULT_SUPP="darwin17.supp ${DEFAULT_SUPP}"
 		  DEFAULT_SUPP="darwin10-drd.supp ${DEFAULT_SUPP}"
 		  ;;
+             18.*)
+                  AC_MSG_RESULT([Darwin 18.x (${kernel}) / macOS 10.14 Mojave])
+                  AC_DEFINE([DARWIN_VERS], DARWIN_10_14, [Darwin / Mac OS X version])
+                  DEFAULT_SUPP="darwin18.supp ${DEFAULT_SUPP}"
+                  DEFAULT_SUPP="darwin10-drd.supp ${DEFAULT_SUPP}"
+      ;;
+       19.*)
+      AC_MSG_RESULT([Darwin 19.x (${kernel}) / macOS 10.15 Catalina])
+      AC_DEFINE([DARWIN_VERS], DARWIN_10_15, [Darwin / Mac OS X version])
+      DEFAULT_SUPP="darwin19.supp ${DEFAULT_SUPP}"
+      DEFAULT_SUPP="darwin10-drd.supp ${DEFAULT_SUPP}"
+                  ;;
              *) 
 		  AC_MSG_RESULT([unsupported (${kernel})])
-		  AC_MSG_ERROR([Valgrind works on Darwin 10.x, 11.x, 12.x, 13.x, 14.x, 15.x, 16.x and 17.x (Mac OS X 10.6/7/8/9/10/11 and macOS 10.12/13)])
+		  AC_MSG_ERROR([Valgrind works on Darwin 10.x-19.x (Mac OS X 10.6-11 and macOS 10.12-15)])
 		  ;;
 	esac
+
+        AC_MSG_CHECKING([for the Xcode SDK version])
+        xcodeversion="legacy"
+        if test "x$XCRUN" != "xno"; then
+          xcodeversion=`xcrun --sdk macosx --show-sdk-version`
+        fi
+        case "${xcodeversion}" in
+	        10.14.6)
+            AC_DEFINE([XCODE_VERS], XCODE_10_14_6, [Xcode version])
+            ;;
+	        legacy|10.5*|10.6*|10.7*|10.8*|10.9*|10.10*|10.11*|10.12*|10.13*|10.14*)
+            AC_DEFINE([XCODE_VERS], XCODE_10_XX, [Xcode version])
+            ;;
+	        10.15*)
+            AC_DEFINE([XCODE_VERS], XCODE_10_15, [Xcode version])
+            ;;
+	        11.*)
+            AC_DEFINE([XCODE_VERS], XCODE_11_0, [Xcode version])
+            ;;
+	        *)
+            AC_MSG_RESULT([unsupported (${xcodeversion})])
+            AC_MSG_ERROR([Valgrind works on Darwin 10.x-19.x (Mac OS X 10.6-11 and macOS 10.12-15)])
+            ;;
+	      esac
+        AC_MSG_RESULT([${xcodeversion}])
+
         ;;
 
      solaris2.11*)
@@ -514,6 +615,15 @@ case "$ARCH_MAX-$VGCONF_OS" in
         AC_MSG_RESULT([no])
         ])
         CFLAGS=$safe_CFLAGS;;
+     x86-darwin|amd64-darwin)
+        AC_MSG_CHECKING([for 32 bit build support])
+        macos_only_32bit="no"
+        if test x$xcodeversion = x10.14.6 -o $XCODE_VERS -ge $XCODE_10_15 ; then
+            vg_cv_only64bit="yes"
+            AC_MSG_RESULT([no])
+        else
+            AC_MSG_RESULT([yes])
+        fi
 esac
 
 if test x$vg_cv_only64bit = xyes -a x$vg_cv_only32bit = xyes; then
@@ -958,20 +1068,6 @@ AM_CONDITIONAL(VGCONF_OS_IS_SOLARIS,
 AM_CONDITIONAL(VGCONF_HAVE_PLATFORM_SEC,
                test x$VGCONF_PLATFORM_SEC_CAPS != x)
 
-dnl automake-1.10 does not have AM_COND_IF (added in 1.11), so we supply a
-dnl fallback definition
-dnl The macro is courtesy of Dave Hart:
-dnl   https://lists.gnu.org/archive/html/automake/2010-12/msg00045.html
-m4_ifndef([AM_COND_IF], [AC_DEFUN([AM_COND_IF], [
-if test -z "$$1_TRUE"; then :
-  m4_n([$2])[]dnl
-m4_ifval([$3],
-[else
-  $3
-])dnl
-fi[]dnl
-])])
-
 #----------------------------------------------------------------------------
 # Inner Valgrind?
 #----------------------------------------------------------------------------
@@ -1014,31 +1110,6 @@ AC_ARG_WITH(tmpdir,
    tmpdir="/tmp")
 AC_DEFINE_UNQUOTED(VG_TMPDIR, "$tmpdir", [Temporary files directory])
 AC_SUBST(VG_TMPDIR, [$tmpdir])
-
-#----------------------------------------------------------------------------
-# Detect xcode path
-#----------------------------------------------------------------------------
-AM_COND_IF([VGCONF_OS_IS_DARWIN],
-[AC_CHECK_PROG([XCRUN], [xcrun], [yes], [no])
-AC_MSG_CHECKING([for xcode sdk include path])
-AC_ARG_WITH(xcodedir,
-   [  --with-xcode-path=PATH      Specify path for xcode sdk includes],
-   [xcodedir="$withval"],
-   [
-      if test "x$XCRUN" != "xno" -a ! -d /usr/include; then
-         xcrundir=`xcrun --sdk macosx --show-sdk-path`
-         if test -z "$xcrundir"; then
-            xcodedir="/usr/include"
-         else
-            xcodedir="$xcrundir/usr/include"
-         fi
-      else
-         xcodedir="/usr/include"
-      fi
-   ])
-AC_MSG_RESULT([$xcodedir])
-AC_DEFINE_UNQUOTED(XCODE_DIR, "$xcodedir", [xcode sdk include directory])
-AC_SUBST(XCODE_DIR, [$xcodedir])])
 
 #----------------------------------------------------------------------------
 # Libc and suppressions
@@ -1455,9 +1526,7 @@ AC_HWCAP_CONTAINS_FLAG([arch_2_05],[HWCAP_HAS_ISA_2_05])
 AC_HWCAP_CONTAINS_FLAG([arch_2_06],[HWCAP_HAS_ISA_2_06])
 AC_HWCAP_CONTAINS_FLAG([arch_2_07],[HWCAP_HAS_ISA_2_07])
 AC_HWCAP_CONTAINS_FLAG([arch_3_00],[HWCAP_HAS_ISA_3_00])
-AC_HWCAP_CONTAINS_FLAG([arch_3_1],[HWCAP_HAS_ISA_3_1])
 AC_HWCAP_CONTAINS_FLAG([htm],[HWCAP_HAS_HTM])
-AC_HWCAP_CONTAINS_FLAG([mma],[HWCAP_HAS_MMA])
 
 # ISA Levels
 AM_CONDITIONAL(HAS_ISA_2_05, [test x$HWCAP_HAS_ISA_2_05 = xyes])
@@ -1626,7 +1695,7 @@ AM_CONDITIONAL(SUPPORTS_HTM, test x$ac_compiler_supports_htm = xyes \
                                -a x$ac_compiler_sees_htm_builtins = xyes \
                                -a x$HWCAP_HAS_HTM = xyes )
 
-# isa 3.0 checking. (actually 3.0 or newer)
+# isa 3.0 checking
 AC_MSG_CHECKING([that assembler knows ISA 3.00 ])
 
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
@@ -1640,26 +1709,8 @@ ac_asm_have_isa_3_00=no
 AC_MSG_RESULT([no])
 ])
 
-# isa 3.01 checking
-AC_MSG_CHECKING([that assembler knows ISA 3.1 ])
-
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
-]], [[
-  __asm__ __volatile__("brh 1,2 ");
-]])], [
-ac_asm_have_isa_3_1=yes
-AC_MSG_RESULT([yes])
-], [
-ac_asm_have_isa_3_1=no
-AC_MSG_RESULT([no])
-])
-
-
 AM_CONDITIONAL(HAS_ISA_3_00, [test x$ac_asm_have_isa_3_00 = xyes \
                              -a x$HWCAP_HAS_ISA_3_00 = xyes])
-
-AM_CONDITIONAL(HAS_ISA_3_1, [test x$ac_asm_have_isa_3_1 = xyes \
-                             -a x$HWCAP_HAS_ISA_3_1 = xyes])
 
 # Check for pthread_create@GLIBC2.0
 AC_MSG_CHECKING([for pthread_create@GLIBC2.0()])
@@ -3054,26 +3105,6 @@ AC_MSG_RESULT([no])
 
 AM_CONDITIONAL(BUILD_RDRAND_TESTS, test x$ac_have_as_rdrand = xyes)
 
-# does the amd64 assembler understand the RDSEED instruction?
-# Note, this doesn't generate a C-level symbol.  It generates a
-# automake-level symbol (BUILD_RDSEED_TESTS), used in test Makefile.am's
-AC_MSG_CHECKING([if amd64 assembler knows the RDSEED instruction])
-
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[]], [[
-  do {
-    asm ("rdseed %r14");
-    asm ("rdseed %r14d");
-    asm ("rdseed %r14w");
-  } while (0)
-]])], [
-ac_have_as_rdseed=yes
-AC_MSG_RESULT([yes])
-], [
-ac_have_as_rdseed=no
-AC_MSG_RESULT([no])
-])
-
-AM_CONDITIONAL(BUILD_RDSEED_TESTS, test x$ac_have_as_rdseed = xyes)
 
 # does the amd64 assembler understand the F16C instructions (VCVTPH2PS and
 # VCVTPS2PH) ?

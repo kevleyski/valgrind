@@ -169,9 +169,6 @@ endif
 if BUILD_RDRAND_TESTS
  check_PROGRAMS += rdrand
 endif
-if BUILD_RDSEED_TESTS
- check_PROGRAMS += rdseed
-endif
 
 
 # DDD: these need to be made to work on Darwin like the x86/ ones were.
