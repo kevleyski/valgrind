@@ -60,6 +60,10 @@ mach_port_t mig_get_reply_port(void)
     // its own behalf, and doesn't call mig outside the semaphore
 }
 
+void
+mach_msg_destroy(mach_msg_header_t *msg)
+{
+}
 
 void mig_dealloc_reply_port(mach_port_t reply_port)
 {

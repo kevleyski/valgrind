@@ -1068,6 +1068,20 @@ AM_CONDITIONAL(VGCONF_OS_IS_SOLARIS,
 AM_CONDITIONAL(VGCONF_HAVE_PLATFORM_SEC,
                test x$VGCONF_PLATFORM_SEC_CAPS != x)
 
+dnl automake-1.10 does not have AM_COND_IF (added in 1.11), so we supply a
+dnl fallback definition
+dnl The macro is courtesy of Dave Hart:
+dnl   https://lists.gnu.org/archive/html/automake/2010-12/msg00045.html
+m4_ifndef([AM_COND_IF], [AC_DEFUN([AM_COND_IF], [
+if test -z "$$1_TRUE"; then :
+  m4_n([$2])[]dnl
+m4_ifval([$3],
+[else
+  $3
+])dnl
+fi[]dnl
+])])
+
 #----------------------------------------------------------------------------
 # Inner Valgrind?
 #----------------------------------------------------------------------------
@@ -1110,6 +1124,31 @@ AC_ARG_WITH(tmpdir,
    tmpdir="/tmp")
 AC_DEFINE_UNQUOTED(VG_TMPDIR, "$tmpdir", [Temporary files directory])
 AC_SUBST(VG_TMPDIR, [$tmpdir])
+
+#----------------------------------------------------------------------------
+# Detect xcode path
+#----------------------------------------------------------------------------
+AM_COND_IF([VGCONF_OS_IS_DARWIN],
+[AC_CHECK_PROG([XCRUN], [xcrun], [yes], [no])
+AC_MSG_CHECKING([for xcode sdk include path])
+AC_ARG_WITH(xcodedir,
+   [  --with-xcode-path=PATH      Specify path for xcode sdk includes],
+   [xcodedir="$withval"],
+   [
+      if test "x$XCRUN" != "xno" -a ! -d /usr/include; then
+         xcrundir=`xcrun --sdk macosx --show-sdk-path`
+         if test -z "$xcrundir"; then
+            xcodedir="/usr/include"
+         else
+            xcodedir="$xcrundir/usr/include"
+         fi
+      else
+         xcodedir="/usr/include"
+      fi
+   ])
+AC_MSG_RESULT([$xcodedir])
+AC_DEFINE_UNQUOTED(XCODE_DIR, "$xcodedir", [xcode sdk include directory])
+AC_SUBST(XCODE_DIR, [$xcodedir])])
 
 #----------------------------------------------------------------------------
 # Libc and suppressions
@@ -1526,7 +1565,9 @@ AC_HWCAP_CONTAINS_FLAG([arch_2_05],[HWCAP_HAS_ISA_2_05])
 AC_HWCAP_CONTAINS_FLAG([arch_2_06],[HWCAP_HAS_ISA_2_06])
 AC_HWCAP_CONTAINS_FLAG([arch_2_07],[HWCAP_HAS_ISA_2_07])
 AC_HWCAP_CONTAINS_FLAG([arch_3_00],[HWCAP_HAS_ISA_3_00])
+AC_HWCAP_CONTAINS_FLAG([arch_3_1],[HWCAP_HAS_ISA_3_1])
 AC_HWCAP_CONTAINS_FLAG([htm],[HWCAP_HAS_HTM])
+AC_HWCAP_CONTAINS_FLAG([mma],[HWCAP_HAS_MMA])
 
 # ISA Levels
 AM_CONDITIONAL(HAS_ISA_2_05, [test x$HWCAP_HAS_ISA_2_05 = xyes])
@@ -1695,7 +1736,7 @@ AM_CONDITIONAL(SUPPORTS_HTM, test x$ac_compiler_supports_htm = xyes \
                                -a x$ac_compiler_sees_htm_builtins = xyes \
                                -a x$HWCAP_HAS_HTM = xyes )
 
-# isa 3.0 checking
+# isa 3.0 checking. (actually 3.0 or newer)
 AC_MSG_CHECKING([that assembler knows ISA 3.00 ])
 
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
@@ -1709,8 +1750,26 @@ ac_asm_have_isa_3_00=no
 AC_MSG_RESULT([no])
 ])
 
+# isa 3.01 checking
+AC_MSG_CHECKING([that assembler knows ISA 3.1 ])
+
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+]], [[
+  __asm__ __volatile__("brh 1,2 ");
+]])], [
+ac_asm_have_isa_3_1=yes
+AC_MSG_RESULT([yes])
+], [
+ac_asm_have_isa_3_1=no
+AC_MSG_RESULT([no])
+])
+
+
 AM_CONDITIONAL(HAS_ISA_3_00, [test x$ac_asm_have_isa_3_00 = xyes \
                              -a x$HWCAP_HAS_ISA_3_00 = xyes])
+
+AM_CONDITIONAL(HAS_ISA_3_1, [test x$ac_asm_have_isa_3_1 = xyes \
+                             -a x$HWCAP_HAS_ISA_3_1 = xyes])
 
 # Check for pthread_create@GLIBC2.0
 AC_MSG_CHECKING([for pthread_create@GLIBC2.0()])
@@ -3105,6 +3164,26 @@ AC_MSG_RESULT([no])
 
 AM_CONDITIONAL(BUILD_RDRAND_TESTS, test x$ac_have_as_rdrand = xyes)
 
+# does the amd64 assembler understand the RDSEED instruction?
+# Note, this doesn't generate a C-level symbol.  It generates a
+# automake-level symbol (BUILD_RDSEED_TESTS), used in test Makefile.am's
+AC_MSG_CHECKING([if amd64 assembler knows the RDSEED instruction])
+
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[]], [[
+  do {
+    asm ("rdseed %r14");
+    asm ("rdseed %r14d");
+    asm ("rdseed %r14w");
+  } while (0)
+]])], [
+ac_have_as_rdseed=yes
+AC_MSG_RESULT([yes])
+], [
+ac_have_as_rdseed=no
+AC_MSG_RESULT([no])
+])
+
+AM_CONDITIONAL(BUILD_RDSEED_TESTS, test x$ac_have_as_rdseed = xyes)
 
 # does the amd64 assembler understand the F16C instructions (VCVTPH2PS and
 # VCVTPS2PH) ?
